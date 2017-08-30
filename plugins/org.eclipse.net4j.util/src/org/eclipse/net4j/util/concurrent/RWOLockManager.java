@@ -13,6 +13,7 @@ package org.eclipse.net4j.util.concurrent;
 import org.eclipse.net4j.internal.util.bundle.OM;
 import org.eclipse.net4j.util.CheckUtil;
 import org.eclipse.net4j.util.ObjectUtil;
+import org.eclipse.net4j.util.collection.ConcurrentHashBag;
 import org.eclipse.net4j.util.collection.HashBag;
 import org.eclipse.net4j.util.lifecycle.Lifecycle;
 import org.eclipse.net4j.util.om.trace.ContextTracer;
@@ -312,14 +313,19 @@ public class RWOLockManager<OBJECT, CONTEXT> extends Lifecycle implements IRWOLo
     return new ArrayList<RWOLockManager.LockState<OBJECT, CONTEXT>>(objectToLockStateMap.values());
   }
 
-  public synchronized void setLockState(OBJECT key, LockState<OBJECT, CONTEXT> lockState)
+  public synchronized void setLockState(OBJECT key, final LockState<OBJECT, CONTEXT> lockState)
   {
     objectToLockStateMap.put(key, lockState);
 
-    for (CONTEXT readLockOwner : lockState.getReadLockOwners())
+    lockState.forEachReadLockOwner(new ConcurrentHashBag.Consumer<CONTEXT>()
     {
-      addContextToLockStateMapping(readLockOwner, lockState);
-    }
+
+      public void accept(CONTEXT readLockOwner)
+      {
+        addContextToLockStateMapping(readLockOwner, lockState);
+      }
+
+    });
 
     CONTEXT writeLockOwner = lockState.getWriteLockOwner();
     if (writeLockOwner != null)
@@ -448,7 +454,7 @@ public class RWOLockManager<OBJECT, CONTEXT> extends Lifecycle implements IRWOLo
   {
     private final OBJECT lockedObject;
 
-    private final HashBag<CONTEXT> readLockOwners = new HashBag<CONTEXT>();
+    private final ConcurrentHashBag<CONTEXT> readLockOwners = new ConcurrentHashBag<CONTEXT>(new HashBag<CONTEXT>());
 
     private CONTEXT writeLockOwner;
 
@@ -518,9 +524,9 @@ public class RWOLockManager<OBJECT, CONTEXT> extends Lifecycle implements IRWOLo
       return false;
     }
 
-    public Set<CONTEXT> getReadLockOwners()
+    public void forEachReadLockOwner(ConcurrentHashBag.Consumer<? super CONTEXT> readLockOwnerConsumer)
     {
-      return Collections.unmodifiableSet(readLockOwners);
+      readLockOwners.forEach(readLockOwnerConsumer);
     }
 
     public CONTEXT getWriteLockOwner()
@@ -564,26 +570,33 @@ public class RWOLockManager<OBJECT, CONTEXT> extends Lifecycle implements IRWOLo
     @Override
     public String toString()
     {
-      StringBuilder builder = new StringBuilder("LockState[target=");
+      final StringBuilder builder = new StringBuilder("LockState[target=");
       builder.append(lockedObject);
 
       if (readLockOwners.size() > 0)
       {
         builder.append(", read=");
-        boolean first = true;
-        for (CONTEXT view : readLockOwners)
+        boolean[] first = { true };
+        readLockOwners.forEach(new ConcurrentHashBag.Consumer<CONTEXT>()
         {
-          if (first)
+
+          private boolean first = true;
+
+          public void accept(CONTEXT view)
           {
-            first = false;
-          }
-          else
-          {
-            builder.append(", ");
+            if (first)
+            {
+              first = false;
+            }
+            else
+            {
+              builder.append(", ");
+            }
+
+            builder.append(view);
           }
 
-          builder.append(view);
-        }
+        });
 
         builder.deleteCharAt(builder.length() - 1);
       }

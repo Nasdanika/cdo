@@ -26,6 +26,7 @@ import org.eclipse.emf.cdo.spi.common.lock.InternalCDOLockState;
 
 import org.eclipse.net4j.util.CheckUtil;
 import org.eclipse.net4j.util.HexUtil;
+import org.eclipse.net4j.util.collection.ConcurrentHashBag;
 import org.eclipse.net4j.util.concurrent.IRWLockManager.LockType;
 import org.eclipse.net4j.util.concurrent.RWOLockManager.LockState;
 
@@ -62,28 +63,33 @@ public final class CDOLockUtil
   public static CDOLockState createLockState(LockState<Object, ? extends CDOCommonView> lockState)
   {
     CheckUtil.checkArg(lockState, "lockState");
-    InternalCDOLockState cdoLockState = new CDOLockStateImpl(lockState.getLockedObject());
+    final InternalCDOLockState cdoLockState = new CDOLockStateImpl(lockState.getLockedObject());
 
-    for (CDOCommonView view : lockState.getReadLockOwners())
+    lockState.forEachReadLockOwner(new ConcurrentHashBag.Consumer<CDOCommonView>()
     {
-      String durableLockingID = view.getDurableLockingID();
-      int sessionID, viewID;
-      CDOCommonSession session = view.getSession();
-      boolean isDurableView = session == null;
-      if (isDurableView)
+
+      public void accept(CDOCommonView view)
       {
-        sessionID = DURABLE_SESSION_ID;
-        viewID = DURABLE_VIEW_ID;
-      }
-      else
-      {
-        sessionID = session.getSessionID();
-        viewID = view.getViewID();
+        String durableLockingID = view.getDurableLockingID();
+        int sessionID, viewID;
+        CDOCommonSession session = view.getSession();
+        boolean isDurableView = session == null;
+        if (isDurableView)
+        {
+          sessionID = DURABLE_SESSION_ID;
+          viewID = DURABLE_VIEW_ID;
+        }
+        else
+        {
+          sessionID = session.getSessionID();
+          viewID = view.getViewID();
+        }
+
+        CDOLockOwner owner = new CDOLockOwnerImpl(sessionID, viewID, durableLockingID, isDurableView);
+        cdoLockState.addReadLockOwner(owner);
       }
 
-      CDOLockOwner owner = new CDOLockOwnerImpl(sessionID, viewID, durableLockingID, isDurableView);
-      cdoLockState.addReadLockOwner(owner);
-    }
+    });
 
     CDOCommonView writeLockOwner = lockState.getWriteLockOwner();
     if (writeLockOwner != null)
